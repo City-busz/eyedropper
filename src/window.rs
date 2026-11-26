@@ -390,22 +390,35 @@ impl AppWindow {
     /// It will show a toast when failing to pick a color, for example when the user cancels the action.
     #[template_callback]
     pub async fn pick_color(&self) {
+        self.pick_color_internal().await;
+    }
+
+    pub async fn pick_color_internal(&self) -> bool {
         tracing::debug!("Picking a color using the color picker");
-        let root = self.root().expect("Failed to get window root");
-        let identifier = ashpd::WindowIdentifier::from_native(&root).await;
+        let identifier = if self.is_mapped() {
+            let root = self.root().expect("Failed to get window root");
+            ashpd::WindowIdentifier::from_native(&root).await
+        } else {
+            None
+        };
         let request = ashpd::desktop::screenshot::ColorRequest::default()
             .identifier(identifier)
             .send()
             .await;
 
         match request.and_then(|req| req.response()) {
-            Ok(color) => self.set_color(Color::from(gtk::gdk::RGBA::from(color))),
+            Ok(color) => {
+                self.set_color(Color::from(gtk::gdk::RGBA::from(color)));
+                true
+            }
             Err(err) => {
-                tracing::error!("{}", err);
-                if !matches!(
+                if matches!(
                     err,
                     ashpd::Error::Response(ashpd::desktop::ResponseError::Cancelled)
                 ) {
+                    tracing::debug!("Color picking cancelled");
+                } else {
+                    tracing::error!("{}", err);
                     self.show_toast(
                         gettext("Failed to pick a color"),
                         adw::ToastPriority::Normal,
@@ -415,8 +428,9 @@ impl AppWindow {
                     // errors
                     self.imp().show_portal_error_page();
                 }
+                false
             }
-        };
+        }
     }
 
     /// Set the current color to the given color.
